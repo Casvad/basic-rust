@@ -20,3 +20,7 @@ to revert migration
 diesel migration redo
 ```
 
+to run application
+```shell
+cargo run
+```
