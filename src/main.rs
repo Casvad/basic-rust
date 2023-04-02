@@ -10,18 +10,79 @@ use diesel::associations::HasTable;
 
 use diesel::prelude::*;
 use diesel::pg::PgConnection;
-use crate::models::{NewPost, SimplePost};
+use crate::models::{NewPost, NewPostHandler, SimplePost};
 
-fn main() {
+use diesel::r2d2::Pool;
+use diesel::r2d2::{self, ConnectionManager};
+use self::models::{Post};
+use self::schema::posts::*;
+use self::schema::posts::dsl::*;
+
+use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::web::Data;
+
+pub type DbPool = Pool<ConnectionManager<PgConnection>>;
+
+#[get("/posts")]
+async fn get_posts(pool: web::Data<DbPool>) -> impl Responder {
+    let mut conn = pool.get().expect("Problems getting connection");
+
+    match web::block(move || { posts.load::<Post>(&mut conn) }).await {
+        Ok(data) => {
+            HttpResponse::Ok().body("Data found")
+        }
+        Err(e) => {
+            HttpResponse::Ok().body("Error Getting data")
+        }
+    }
+}
+
+#[post("/posts")]
+async fn create_posts(
+    pool: web::Data<DbPool>,
+    item: web::Json<NewPostHandler>,
+) -> impl Responder {
+    let conn_result = pool.get();
+    match conn_result {
+        Ok(conn) => {
+            let mut conn_box = Box::new(conn);
+            let mut_ref_conn = &mut *conn_box;
+            match web::block(move || { Post::create_post(mut_ref_conn, &item) }).await {
+                Ok(data) => {
+                    HttpResponse::Ok().body("Element created")
+                }
+                Err(e) => {
+                    HttpResponse::Ok().body("Error Getting data")
+                }
+            }
+        }
+        Err(_) => HttpResponse::InternalServerError().body("Could not connect to database"),
+    }
+}
+
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    std::env::set_var("RUST_LOG", "debug");
+    dotenv().ok();
+
+    let db_url = env::var("DATABASE_URL").expect("db url variable not found");
+    let connection = ConnectionManager::<PgConnection>::new(db_url);
+    let pool = Pool::builder().build(connection).expect("Cannot construct pool");
+
+    HttpServer::new(move || {
+        App::new()
+            .service(get_posts)
+            .service(create_posts)
+            .app_data(Data::new(pool.clone()))
+    }).bind(("0.0.0.0", 8080)).unwrap().run().await
+}
+
+fn example_diesel() {
     dotenv().ok();
 
     let db_url = env::var("DATABASE_URL").expect("db url variable not found");
 
     let mut conn = PgConnection::establish(&db_url).expect("cannot connect to database");
-
-    use self::models::{Post, NewPost};
-    use self::schema::posts::*;
-    use self::schema::posts::dsl::*;
 
     let new_post = NewPost {
         title: "My first blogpost",
